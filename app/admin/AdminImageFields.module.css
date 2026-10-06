@@ -1,0 +1,116 @@
+.imageField,
+.imageHint,
+.imageError,
+.imagePreview {
+  grid-column: 1 / -1;
+}
+
+.imageField {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.imageField input {
+  width: 100%;
+}
+
+.imageHint,
+.imageError {
+  margin: -4px 0 0;
+  font-size: 11px;
+}
+
+.imageHint {
+  color: var(--muted);
+}
+
+.imageError {
+  color: #b34a5d;
+}
+
+.imagePreview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.imagePreview img {
+  width: 96px;
+  height: 96px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.formActions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+:global(.adminProductTable) > .productRow {
+  grid-template-columns: 52px minmax(0, 1fr) 110px 90px auto;
+  gap: 13px;
+}
+
+.productName {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.productName b {
+  display: block;
+}
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.rowActions button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.rowActions button:hover,
+.rowActions button:focus-visible {
+  background: var(--rose);
+  color: var(--pink);
+}
+
+@media (max-width: 700px) {
+  :global(.adminProductTable) > .productRow {
+    grid-template-columns: 44px minmax(0, 1fr) 75px 60px auto;
+    gap: 7px;
+  }
+
+  :global(.adminProductTable) > .productRow > img {
+    width: 44px;
+    height: 44px;
+  }
+
+  .rowActions {
+    gap: 1px;
+  }
+
+  .rowActions button {
+    width: 28px;
+    height: 32px;
+  }
+}
