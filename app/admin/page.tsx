@@ -4,7 +4,9 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, BarChart3, Package, Pencil, Plus, ShoppingCart, Trash2 } from 'lucide-react';
 import styles from './AdminImageFields.module.css';
-import { getProductsFromStorage, starterProducts, type Product } from '@/lib/products';
+import { addProduct, getProducts, migrateLegacyProducts, setProductActive, updateProduct, type ProductFields, type Product } from '@/lib/products';
+import { useProductCatalog } from '@/context/ProductCatalogContext';
+import { getSupabaseClient } from '@/lib/supabase';
 import { convertGoogleDriveUrl } from '@/lib/image';
 import { formatTaka } from '@/lib/currency';
 import { getStoredOrders, updateOrderStatus, type Order, type OrderStatus } from '@/lib/order';
@@ -12,76 +14,185 @@ import { getStoredOrders, updateOrderStatus, type Order, type OrderStatus } from
 type Tab = 'dashboard' | 'products' | 'orders';
 
 export default function Admin() {
-  const [products, setProducts] = useState<Product[]>(starterProducts);
+  const { refresh: refreshPublicProducts } = useProductCatalog();
+  const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [tab, setTab] = useState<Tab>('dashboard');
   const [imageUrl, setImageUrl] = useState('');
-  const [uploadedImage, setUploadedImage] = useState('');
+  const [uploadedImage, setUploadedImage] = useState<File | null>(null);
+  const [uploadedPreview, setUploadedPreview] = useState('');
   const [imageError, setImageError] = useState('');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [successMessage, setSuccessMessage] = useState('');
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [productsError, setProductsError] = useState('');
 
   useEffect(() => {
-    setProducts(getProductsFromStorage());
     setOrders(getStoredOrders());
-  }, []);
-
-  function save(value: Product[]) {
-    localStorage.setItem('beauty-spell-products', JSON.stringify(value));
-    setProducts(value);
-  }
-
-  function submitProduct(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const convertedImageUrl = convertGoogleDriveUrl(imageUrl);
-    if (convertedImageUrl === null && !uploadedImage) {
-      setImageError('Enter a valid Google Drive file-sharing link.');
+    const client = getSupabaseClient();
+    if (!client) {
+      setAuthError('Supabase is not configured. Set the public URL and anon or publishable key.');
+      setAuthLoading(false);
       return;
     }
-    const image = uploadedImage || convertedImageUrl;
-    if (!image) {
+
+    let mounted = true;
+    const applySession = (session: Awaited<ReturnType<typeof client.auth.getSession>>['data']['session']) => {
+      const authorized = session?.user.app_metadata.role === 'admin';
+      setIsAdmin(Boolean(authorized));
+      if (authorized) void refreshProducts();
+      else setProducts([]);
+    };
+
+    client.auth.getSession().then(({ data, error }) => {
+      if (!mounted) return;
+      if (error) setAuthError(`Could not check Admin access: ${error.message}`);
+      applySession(data.session);
+      setAuthLoading(false);
+    }).catch((error: unknown) => {
+      if (!mounted) return;
+      setAuthError(error instanceof Error ? error.message : 'Could not check Admin access.');
+      setAuthLoading(false);
+    });
+
+    const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
+      if (mounted) applySession(session);
+    });
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  async function refreshProducts() {
+    setProductsLoading(true);
+    try {
+      setProducts(await getProducts(true));
+      setProductsError('');
+    } catch (error) {
+      setProductsError(error instanceof Error ? error.message : 'Could not load products.');
+    } finally {
+      setProductsLoading(false);
+    }
+  }
+
+  async function signIn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const client = getSupabaseClient();
+    if (!client) {
+      setAuthError('Supabase is not configured. Set the public URL and anon or publishable key.');
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError('');
+    const { data, error } = await client.auth.signInWithPassword({ email, password });
+    if (error) {
+      setAuthError(`Could not sign in: ${error.message}`);
+      setAuthLoading(false);
+      return;
+    }
+    if (data.user.app_metadata.role !== 'admin') {
+      await client.auth.signOut();
+      setAuthError('This account is not authorized for Admin access.');
+      setAuthLoading(false);
+      return;
+    }
+    setIsAdmin(true);
+    setPassword('');
+    await refreshProducts();
+    setAuthLoading(false);
+  }
+
+  async function signOut() {
+    const client = getSupabaseClient();
+    if (!client) return;
+    const { error } = await client.auth.signOut();
+    if (error) setAuthError(`Could not sign out: ${error.message}`);
+    else setIsAdmin(false);
+  }
+
+  async function submitProduct(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    const convertedImageUrl = convertGoogleDriveUrl(imageUrl);
+    const isKeepingExistingImage = Boolean(
+      editingProduct && imageUrl === editingProduct.image,
+    );
+    if (convertedImageUrl === null && !uploadedImage && !isKeepingExistingImage) {
+      setImageError('Enter a valid Google Drive file-sharing link.');
+      setSaving(false);
+      return;
+    }
+    let image = convertedImageUrl || editingProduct?.image || '';
+    if (!image && !uploadedImage) {
       setImageError('Enter a product image URL or upload an image.');
+      setSaving(false);
       return;
     }
 
     const form = event.currentTarget;
     const fields = new FormData(form);
-    const product: Product = {
-      ...editingProduct,
-      id: editingProduct?.id ?? Date.now(),
-      name: String(fields.get('name')),
-      category: String(fields.get('category')),
-      brand: String(fields.get('brand')) || 'Beauty Spell',
-      price: Number(fields.get('price')),
-      discountPrice: Number(fields.get('discountPrice')) || undefined,
-      image: uploadedImage || convertedImageUrl || editingProduct?.image || image,
-      description: String(fields.get('description')),
-      badge: String(fields.get('badge')) || undefined,
-      rating: editingProduct?.rating ?? 4.8,
-      reviews: editingProduct?.reviews ?? 0,
-      stock: Number(fields.get('stock')) || 0,
-      featured: fields.get('featured') === 'on',
-    };
+    try {
+      const client = getSupabaseClient();
+      if (!client) throw new Error('Supabase is not configured.');
+      if (uploadedImage) {
+        const safeName = uploadedImage.name.replace(/[^a-zA-Z0-9._-]/g, '-');
+        const path = `products/${crypto.randomUUID()}-${safeName}`;
+        const { data, error } = await client.storage
+          .from('product-images')
+          .upload(path, uploadedImage, { contentType: uploadedImage.type, upsert: false });
+        if (error) throw new Error(`Could not upload image: ${error.message}`);
+        image = client.storage.from('product-images').getPublicUrl(data.path).data.publicUrl;
+      }
 
-    if (editingProduct) {
-      save(products.map((existing) => existing.id === editingProduct.id ? product : existing));
-      setSuccessMessage('Product updated successfully.');
-    } else {
-      save([product, ...products]);
-      setSuccessMessage('Product added successfully.');
+      const product: ProductFields = {
+        name: String(fields.get('name')),
+        category: String(fields.get('category')),
+        brand: String(fields.get('brand')) || 'Beauty Spell',
+        price: Number(fields.get('price')),
+        discountPrice: Number(fields.get('discountPrice')) || undefined,
+        image,
+        description: String(fields.get('description')),
+        badge: String(fields.get('badge')) || undefined,
+        stock: Number(fields.get('stock')) || 0,
+        featured: fields.get('featured') === 'on',
+        active: fields.get('active') === 'on',
+      };
+
+      if (editingProduct) {
+        await updateProduct(editingProduct.id, product);
+        setSuccessMessage('Product updated successfully.');
+      } else {
+        await addProduct(product);
+        setSuccessMessage('Product added successfully.');
+      }
+      await refreshProducts();
+      await refreshPublicProducts();
+      form.reset();
+      setEditingProduct(null);
+      setImageUrl('');
+      setUploadedImage(null);
+      setUploadedPreview('');
+      setImageError('');
+      window.setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (error) {
+      setProductsError(error instanceof Error ? error.message : 'Could not save the product.');
+    } finally {
+      setSaving(false);
     }
-    form.reset();
-    setEditingProduct(null);
-    setImageUrl('');
-    setUploadedImage('');
-    setImageError('');
-    window.setTimeout(() => setSuccessMessage(''), 3000);
   }
 
   function editProduct(product: Product) {
     setEditingProduct(product);
     setImageUrl(product.image.startsWith('data:') ? '' : product.image);
-    setUploadedImage('');
+    setUploadedImage(null);
+    setUploadedPreview('');
     setImageError('');
     setSuccessMessage('');
     document.querySelector('.adminMain .productForm')?.scrollIntoView({
@@ -93,18 +204,34 @@ export default function Admin() {
   function cancelEdit() {
     setEditingProduct(null);
     setImageUrl('');
-    setUploadedImage('');
+    setUploadedImage(null);
+    setUploadedPreview('');
     setImageError('');
   }
 
-  function deleteProduct(id: number) {
-    save(products.filter((product) => product.id !== id));
-    if (editingProduct?.id === id) cancelEdit();
+  async function toggleProductActive(product: Product) {
+    try {
+      await setProductActive(product.id, !product.active);
+      if (editingProduct?.id === product.id) cancelEdit();
+      await refreshProducts();
+      await refreshPublicProducts();
+      setSuccessMessage(product.active ? 'Product disabled.' : 'Product enabled.');
+      window.setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (error) {
+      setProductsError(error instanceof Error ? error.message : 'Could not update product status.');
+    }
   }
 
-  function resetCatalogue() {
-    save(starterProducts);
-    cancelEdit();
+  async function importLegacyCatalogue() {
+    try {
+      const count = await migrateLegacyProducts();
+      await refreshProducts();
+      await refreshPublicProducts();
+      setSuccessMessage(`${count} legacy product${count === 1 ? '' : 's'} imported into Supabase.`);
+      window.setTimeout(() => setSuccessMessage(''), 4000);
+    } catch (error) {
+      setProductsError(error instanceof Error ? error.message : 'Could not import legacy products.');
+    }
   }
 
   function handleImageUrlChange(value: string) {
@@ -119,26 +246,33 @@ export default function Admin() {
       ? 'Enter a valid Google Drive file-sharing link.'
       : '';
     if (!file) {
-      setUploadedImage('');
+      setUploadedImage(null);
+      setUploadedPreview('');
       setImageError(urlError);
       return;
     }
     if (!file.type.startsWith('image/')) {
-      setUploadedImage('');
+      setUploadedImage(null);
+      setUploadedPreview('');
       setImageError('Choose an image file.');
       return;
     }
 
+    setUploadedImage(file);
     setImageError(urlError);
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result !== 'string') {
+        setUploadedImage(null);
         setImageError('Could not read the uploaded image.');
         return;
       }
-      setUploadedImage(reader.result);
+      setUploadedPreview(reader.result);
     };
-    reader.onerror = () => setImageError('Could not read the uploaded image.');
+    reader.onerror = () => {
+      setUploadedImage(null);
+      setImageError('Could not read the uploaded image.');
+    };
     reader.readAsDataURL(file);
   }
 
@@ -156,7 +290,39 @@ export default function Admin() {
     ['New', 'Confirmed', 'Processing'].includes(order.status),
   ).length;
   const convertedImageUrl = convertGoogleDriveUrl(imageUrl);
-  const previewImage = uploadedImage || convertedImageUrl || editingProduct?.image || '';
+  const previewImage = uploadedPreview || convertedImageUrl || editingProduct?.image || '';
+
+  if (authLoading) {
+    return <main className="adminShell"><p className="commerceNotice">Checking Admin access…</p></main>;
+  }
+
+  if (!isAdmin) {
+    return (
+      <main className="adminShell">
+        <section className="adminMain">
+          <div className="adminPanel">
+            <span className="kicker">BEAUTY SPELL ADMIN</span>
+            <h1>Admin sign in</h1>
+            <p className="muted">Sign in with an authorized Supabase account to manage products and orders.</p>
+            <form className="productForm" onSubmit={signIn}>
+              <label className={styles.formField}>
+                Email
+                <input type="email" required autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} />
+              </label>
+              <label className={styles.formField}>
+                Password
+                <input type="password" required autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
+              </label>
+              {authError && <p className={styles.imageError} role="alert">{authError}</p>}
+              <div className={styles.formActions}>
+                <button className="ctaPrimary">Sign in</button>
+              </div>
+            </form>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="adminShell">
@@ -182,7 +348,10 @@ export default function Admin() {
             <span className="kicker">BEAUTY SPELL ADMIN</span>
             <h1>{tab[0].toUpperCase() + tab.slice(1)}</h1>
           </div>
-          <Link href="/" className="ctaGhost dark">View Store</Link>
+          <div className={styles.formActions}>
+            <Link href="/" className="ctaGhost dark">View Store</Link>
+            <button type="button" className="ctaGhost dark" onClick={() => void signOut()}>Sign out</button>
+          </div>
         </div>
 
         {tab === 'dashboard' && (
@@ -216,12 +385,30 @@ export default function Admin() {
                 onSubmit={submitProduct}
                 className="productForm"
               >
-                <input required name="name" placeholder="Product name" defaultValue={editingProduct?.name ?? ''} />
-                <input required name="category" placeholder="Category e.g. Skincare" defaultValue={editingProduct?.category ?? ''} />
-                <input name="brand" placeholder="Brand" defaultValue={editingProduct?.brand ?? ''} />
-                <input required type="number" min="0" name="price" placeholder="Regular price" defaultValue={editingProduct?.price ?? ''} />
-                <input type="number" min="0" name="discountPrice" placeholder="Discount price" defaultValue={editingProduct?.discountPrice ?? ''} />
-                <input type="number" min="0" name="stock" placeholder="Stock quantity" defaultValue={editingProduct?.stock ?? ''} />
+                <label className={styles.formField}>
+                  Product name
+                  <input required name="name" placeholder="Product name" defaultValue={editingProduct?.name ?? ''} />
+                </label>
+                <label className={styles.formField}>
+                  Category
+                  <input required name="category" placeholder="e.g. Skincare" defaultValue={editingProduct?.category ?? ''} />
+                </label>
+                <label className={styles.formField}>
+                  Brand
+                  <input name="brand" placeholder="Brand" defaultValue={editingProduct?.brand ?? ''} />
+                </label>
+                <label className={styles.formField}>
+                  Regular price
+                  <input required type="number" min="0" name="price" placeholder="Regular price" defaultValue={editingProduct?.price ?? ''} />
+                </label>
+                <label className={styles.formField}>
+                  Discount price
+                  <input type="number" min="0" name="discountPrice" placeholder="Discount price" defaultValue={editingProduct?.discountPrice ?? ''} />
+                </label>
+                <label className={styles.formField}>
+                  Stock quantity
+                  <input type="number" min="0" name="stock" placeholder="Stock quantity" defaultValue={editingProduct?.stock ?? ''} />
+                </label>
                 <label className={styles.imageField}>
                   Product Image URL
                   <input
@@ -247,6 +434,9 @@ export default function Admin() {
                 {imageError && (
                   <p id="product-image-error" className={styles.imageError} role="alert">{imageError}</p>
                 )}
+                {productsError && (
+                  <p className={styles.imageError} role="alert">{productsError}</p>
+                )}
                 {previewImage && (
                   <div className={styles.imagePreview}>
                     <img src={previewImage} alt="Product image preview" />
@@ -259,14 +449,29 @@ export default function Admin() {
                     </span>
                   </div>
                 )}
-                <input name="badge" placeholder="Badge e.g. NEW / 20% OFF" defaultValue={editingProduct?.badge ?? ''} />
-                <textarea required name="description" placeholder="Product description" defaultValue={editingProduct?.description ?? ''} />
-                <label className="checkLabel">
-                  <input type="checkbox" name="featured" defaultChecked={editingProduct?.featured ?? false} /> Featured on homepage
+                <label className={styles.formField}>
+                  Badge
+                  <input name="badge" placeholder="e.g. NEW / 20% OFF" defaultValue={editingProduct?.badge ?? ''} />
                 </label>
+                <label className={`${styles.formField} ${styles.descriptionField}`}>
+                  Description
+                  <textarea required name="description" placeholder="Product description" defaultValue={editingProduct?.description ?? ''} />
+                </label>
+                <div className={styles.formField}>
+                  Featured
+                  <label className="checkLabel">
+                    <input type="checkbox" name="featured" defaultChecked={editingProduct?.featured ?? false} /> Show on homepage
+                  </label>
+                </div>
+                <div className={styles.formField}>
+                  Status
+                  <label className="checkLabel">
+                    <input type="checkbox" name="active" defaultChecked={editingProduct?.active ?? true} /> Active on storefront
+                  </label>
+                </div>
                 <div className={styles.formActions}>
-                  <button className="ctaPrimary">
-                    {editingProduct ? 'Save Changes' : <><Plus size={17} /> Add Product</>}
+                  <button className="ctaPrimary" disabled={saving}>
+                    {saving ? 'Saving…' : editingProduct ? 'Save Changes' : <><Plus size={17} /> Add Product</>}
                   </button>
                   {editingProduct && (
                     <button type="button" className="ctaGhost dark" onClick={cancelEdit}>
@@ -280,14 +485,26 @@ export default function Admin() {
             <div className="adminPanel">
               <div className="panelHeading">
                 <h2>Products</h2>
-                <button onClick={resetCatalogue}>Reset demo catalogue</button>
+                <div className={styles.formActions}>
+                  {!products.length && !productsLoading && (
+                    <button type="button" onClick={() => void importLegacyCatalogue()}>
+                      Import this browser&apos;s old products
+                    </button>
+                  )}
+                  <button type="button" onClick={() => void refreshProducts()} disabled={productsLoading}>
+                    {productsLoading ? 'Loading…' : 'Refresh products'}
+                  </button>
+                </div>
               </div>
+              {productsError && <p className={styles.imageError} role="alert">{productsError}</p>}
               <div className="adminProductTable">
-                {products.map((product) => (
+                {!products.length && !productsLoading
+                  ? <p className="muted">No products found in the Supabase products table.</p>
+                  : products.map((product) => (
                   <div key={product.id} className={styles.productRow}>
                     <img src={product.image} alt="" />
                     <div className={styles.productName}>
-                      <b>{product.name}</b><span>{product.brand} · {product.category}</span>
+                      <b>{product.name}</b><span>{product.brand} · {product.category}{product.active ? '' : ' · Inactive'}</span>
                     </div>
                     <strong>{formatTaka(product.discountPrice ?? product.price)}</strong>
                     <span>Stock {product.stock ?? '—'}</span>
@@ -302,11 +519,11 @@ export default function Admin() {
                       </button>
                       <button
                         type="button"
-                        aria-label={`Delete ${product.name}`}
-                        title={`Delete ${product.name}`}
-                        onClick={() => deleteProduct(product.id)}
+                        aria-label={`${product.active ? 'Disable' : 'Enable'} ${product.name}`}
+                        title={`${product.active ? 'Disable' : 'Enable'} ${product.name}`}
+                        onClick={() => void toggleProductActive(product)}
                       >
-                        <Trash2 size={17} />
+                        {product.active ? <Trash2 size={17} /> : <Plus size={17} />}
                       </button>
                     </div>
                   </div>

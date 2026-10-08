@@ -5,6 +5,22 @@
   grid-column: 1 / -1;
 }
 
+.formField {
+  display: grid;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.formField > input,
+.formField > textarea {
+  width: 100%;
+}
+
+.descriptionField {
+  grid-column: 1 / -1;
+}
+
 .imageField {
   display: grid;
   gap: 7px;

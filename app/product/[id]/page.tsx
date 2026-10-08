@@ -1,3 +1,143 @@
 'use client';
-import{useEffect,useMemo,useState}from'react';import{useParams}from'next/navigation';import Link from'next/link';import{Check,Heart,Minus,Plus,ShieldCheck,ShoppingBag,Star,Truck}from'lucide-react';import SiteHeader from'@/components/SiteHeader';import SiteFooter from'@/components/SiteFooter';import ProductCard from'@/components/ProductCard';import{getProductsFromStorage,type Product}from'@/lib/products';import{formatTaka}from'@/lib/currency';import{useCart}from'@/context/CartContext';import{useWishlist}from'@/context/WishlistContext';
-export default function ProductPage(){const params=useParams();const id=Number(params.id);const[products,setProducts]=useState<Product[]>([]);const[qty,setQty]=useState(1);const[toast,setToast]=useState('');const{addToCart}=useCart();const{toggle,has}=useWishlist();useEffect(()=>setProducts(getProductsFromStorage()),[]);const product=products.find(p=>p.id===id);const related=useMemo(()=>product?products.filter(p=>p.id!==id&&p.category===product.category).slice(0,4):[],[products,id,product]);if(!products.length)return <><SiteHeader/><p className="commerceNotice">Loading product…</p></>;if(!product)return <><SiteHeader/><main className="notFound"><h1>Product not found</h1><Link className="ctaPrimary" href="/shop">Back to shop</Link></main><SiteFooter/></>;const sell=product.discountPrice??product.price;function add(){for(let i=0;i<qty;i++)addToCart(product!);setToast(`${qty} × ${product!.name} added to cart`);setTimeout(()=>setToast(''),2200)}return <><SiteHeader/><main className="productPage"><div className="breadcrumbs"><Link href="/">Home</Link> / <Link href="/shop">Shop</Link> / <Link href={`/shop?category=${product.category}`}>{product.category}</Link> / <span>{product.name}</span></div><section className="productDetail"><div className="detailImage"><img src={product.image} alt={product.name}/>{product.badge&&<span>{product.badge}</span>}</div><div className="detailInfo"><span className="detailBrand">{product.brand||product.category}</span><h1>{product.name}</h1><div className="detailRating"><Star size={16} fill="currentColor"/><b>{product.rating||4.8}</b><span>{product.reviews||0} reviews</span><i>•</i><span className="stock"><Check size={14}/> {product.stock===0?'Out of stock':'In stock'}</span></div><div className="detailPrice"><strong>{formatTaka(sell)}</strong>{product.discountPrice&&<del>{formatTaka(product.price)}</del>}</div><p className="detailDescription">{product.description}</p><div className="qtyLine"><span>Quantity</span><div className="qtyBox"><button onClick={()=>setQty(q=>Math.max(1,q-1))}><Minus size={15}/></button><b>{qty}</b><button onClick={()=>setQty(q=>Math.min(product.stock||99,q+1))}><Plus size={15}/></button></div></div><div className="detailActions"><button className="ctaPrimary" onClick={add} disabled={product.stock===0}><ShoppingBag size={18}/> Add to Cart</button><button className={`wishlistLarge ${has(product.id)?'active':''}`} onClick={()=>toggle(product.id)}><Heart size={18} fill={has(product.id)?'currentColor':'none'}/> {has(product.id)?'Saved':'Add to Wishlist'}</button></div><div className="detailTrust"><div><Truck/><span><b>Nationwide delivery</b><small>Dhaka & outside Dhaka options</small></span></div><div><ShieldCheck/><span><b>Secure order flow</b><small>Cart and customer details stay protected in your browser</small></span></div></div><div className="detailTabs"><details open><summary>Product details</summary><p>{product.description} Designed for easy everyday use. Please check the product label and page guidance before use.</p></details><details><summary>Delivery & support</summary><p>Delivery charge is calculated at checkout. For questions about shades, stock or delivery, contact Beauty Spell through the Facebook page.</p></details></div></div></section>{related.length>0&&<section className="related"><div className="sectionTitle"><div><span>YOU MAY ALSO LIKE</span><h2>More from {product.category}</h2></div></div><div className="productGrid">{related.map(p=><ProductCard key={p.id} product={p} onAdded={n=>{setToast(`${n} added to cart`);setTimeout(()=>setToast(''),2200)}}/>)}</div></section>}</main><SiteFooter/><div className="cartToast">{toast}</div></>}
+
+import { useMemo, useState } from 'react';
+import { useParams } from 'next/navigation';
+import Link from 'next/link';
+import { Check, Heart, Minus, Plus, ShieldCheck, ShoppingBag, Star, Truck } from 'lucide-react';
+import SiteHeader from '@/components/SiteHeader';
+import SiteFooter from '@/components/SiteFooter';
+import ProductCard from '@/components/ProductCard';
+import { useProductCatalog } from '@/context/ProductCatalogContext';
+import { formatTaka } from '@/lib/currency';
+import { useCart } from '@/context/CartContext';
+import { useWishlist } from '@/context/WishlistContext';
+
+export default function ProductPage() {
+  const params = useParams();
+  const id = Number(params.id);
+  const { products, loading } = useProductCatalog();
+  const [qty, setQty] = useState(1);
+  const [toast, setToast] = useState('');
+  const { addToCart } = useCart();
+  const { toggle, has } = useWishlist();
+  const product = products.find((item) => item.id === id);
+  const related = useMemo(
+    () => product ? products.filter((item) => item.id !== id && item.category === product.category).slice(0, 4) : [],
+    [products, id, product],
+  );
+
+  if (loading) {
+    return <><SiteHeader /><p className="commerceNotice">Loading product…</p></>;
+  }
+  if (!product) {
+    return (
+      <>
+        <SiteHeader />
+        <main className="notFound">
+          <h1>Product not found</h1>
+          <Link className="ctaPrimary" href="/shop">Back to shop</Link>
+        </main>
+        <SiteFooter />
+      </>
+    );
+  }
+
+  const sellingPrice = product.discountPrice ?? product.price;
+  function add() {
+    if (!product) return;
+    for (let count = 0; count < qty; count += 1) addToCart(product);
+    setToast(`${qty} × ${product.name} added to cart`);
+    setTimeout(() => setToast(''), 2200);
+  }
+
+  return (
+    <>
+      <SiteHeader />
+      <main className="productPage">
+        <div className="breadcrumbs">
+          <Link href="/">Home</Link> / <Link href="/shop">Shop</Link> /
+          <Link href={`/shop?category=${encodeURIComponent(product.category)}`}>{product.category}</Link> /
+          <span>{product.name}</span>
+        </div>
+        <section className="productDetail">
+          <div className="detailImage">
+            <img src={product.image} alt={product.name} />
+            {product.badge && <span>{product.badge}</span>}
+          </div>
+          <div className="detailInfo">
+            <span className="detailBrand">{product.brand || product.category}</span>
+            <h1>{product.name}</h1>
+            <div className="detailRating">
+              <Star size={16} fill="currentColor" />
+              <b>{product.rating || 4.8}</b>
+              <span>{product.reviews || 0} reviews</span>
+              <i>•</i>
+              <span className="stock">
+                <Check size={14} /> {product.stock === 0 ? 'Out of stock' : 'In stock'}
+              </span>
+            </div>
+            <div className="detailPrice">
+              <strong>{formatTaka(sellingPrice)}</strong>
+              {product.discountPrice && <del>{formatTaka(product.price)}</del>}
+            </div>
+            <p className="detailDescription">{product.description}</p>
+            <div className="qtyLine">
+              <span>Quantity</span>
+              <div className="qtyBox">
+                <button onClick={() => setQty((count) => Math.max(1, count - 1))}><Minus size={15} /></button>
+                <b>{qty}</b>
+                <button onClick={() => setQty((count) => Math.min(product.stock || 99, count + 1))}>
+                  <Plus size={15} />
+                </button>
+              </div>
+            </div>
+            <div className="detailActions">
+              <button className="ctaPrimary" onClick={add} disabled={product.stock === 0}>
+                <ShoppingBag size={18} /> Add to Cart
+              </button>
+              <button className={`wishlistLarge ${has(product.id) ? 'active' : ''}`} onClick={() => toggle(product.id)}>
+                <Heart size={18} fill={has(product.id) ? 'currentColor' : 'none'} />
+                {has(product.id) ? 'Saved' : 'Add to Wishlist'}
+              </button>
+            </div>
+            <div className="detailTrust">
+              <div><Truck /><span><b>Nationwide delivery</b><small>Dhaka & outside Dhaka options</small></span></div>
+              <div><ShieldCheck /><span><b>Secure order flow</b><small>Cart and customer details stay protected in your browser</small></span></div>
+            </div>
+            <div className="detailTabs">
+              <details open>
+                <summary>Product details</summary>
+                <p>{product.description} Designed for easy everyday use. Please check the product label and page guidance before use.</p>
+              </details>
+              <details>
+                <summary>Delivery & support</summary>
+                <p>Delivery charge is calculated at checkout. For questions about shades, stock or delivery, contact Beauty Spell through the Facebook page.</p>
+              </details>
+            </div>
+          </div>
+        </section>
+        {related.length > 0 && (
+          <section className="related">
+            <div className="sectionTitle">
+              <div><span>YOU MAY ALSO LIKE</span><h2>More from {product.category}</h2></div>
+            </div>
+            <div className="productGrid">
+              {related.map((item) => (
+                <ProductCard
+                  key={item.id}
+                  product={item}
+                  onAdded={(name) => {
+                    setToast(`${name} added to cart`);
+                    setTimeout(() => setToast(''), 2200);
+                  }}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+      </main>
+      <SiteFooter />
+      <div className="cartToast">{toast}</div>
+    </>
+  );
+}

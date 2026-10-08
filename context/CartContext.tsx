@@ -17,6 +17,7 @@ import {
   type CartItem,
 } from '@/lib/cart';
 import type { Product } from '@/lib/products';
+import { useProductCatalog } from '@/context/ProductCatalogContext';
 
 type CartContextValue = {
   cartItems: CartItem[];
@@ -35,13 +36,35 @@ type CartContextValue = {
 const CartContext = createContext<CartContextValue | null>(null);
 
 export function CartProvider({ children }: { children: ReactNode }) {
+  const { products, loading: catalogLoading, error: catalogError } = useProductCatalog();
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
-  const [hydrated, setHydrated] = useState(false);
+  const [cartStorageLoaded, setCartStorageLoaded] = useState(false);
+  const [catalogReconciled, setCatalogReconciled] = useState(false);
+  const hydrated = cartStorageLoaded && catalogReconciled;
 
   useEffect(() => {
     setCartItems(getCartItemsFromStorage());
-    setHydrated(true);
+    setCartStorageLoaded(true);
   }, []);
+
+  useEffect(() => {
+    if (!cartStorageLoaded || catalogLoading) return;
+    if (catalogError) {
+      setCatalogReconciled(true);
+      return;
+    }
+    setCartItems((items) => items.flatMap((item) => {
+      const currentProduct = products.find((product) => product.id === item.product.id);
+      return currentProduct
+        ? [{
+            ...item,
+            product: currentProduct,
+            unitPrice: getProductSellingPrice(currentProduct),
+          }]
+        : [];
+    }));
+    setCatalogReconciled(true);
+  }, [cartStorageLoaded, catalogError, catalogLoading, products]);
 
   useEffect(() => {
     if (!hydrated) return;

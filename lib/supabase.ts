@@ -1,27 +1,33 @@
 import { createClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+let supabaseClient: SupabaseClient | null = null;
 
-if (!supabaseUrl) {
-  throw new Error(
-    "Missing NEXT_PUBLIC_SUPABASE_URL. Configure it in the environment before using Supabase."
-  );
+export function getSupabaseClient(): SupabaseClient | null {
+  if (supabaseClient) return supabaseClient;
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseKey =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+  if (!supabaseUrl || !supabaseKey) return null;
+
+  supabaseClient = createClient(supabaseUrl, supabaseKey, {
+    global: {
+      fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }),
+    },
+  });
+  return supabaseClient;
 }
-
-const supabaseKey =
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-
-if (!supabaseKey) {
-  throw new Error(
-    "Missing Supabase public key. Configure NEXT_PUBLIC_SUPABASE_ANON_KEY or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY before using Supabase."
-  );
-}
-
-export const supabase = createClient(supabaseUrl, supabaseKey);
 
 export async function testSupabaseConnection() {
-  const { data, error } = await supabase.from("products").select("*").limit(1);
+  const client = getSupabaseClient();
+  if (!client) {
+    return {
+      data: null,
+      error: new Error("Missing Supabase public URL or anon/publishable key."),
+    };
+  }
 
-  return { data, error };
+  return client.from("products").select("*").limit(1);
 }

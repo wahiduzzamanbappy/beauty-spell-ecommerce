@@ -1,16 +1,228 @@
-export type Product = { id:number; name:string; category:string; brand?:string; price:number; discountPrice?:number; image:string; description:string; badge?:string; rating?:number; reviews?:number; stock?:number; featured?:boolean; tags?:string[] };
-export const starterProducts: Product[] = [
-{id:1,name:'Velvet Bloom Lip Tint',category:'Lips',brand:'Beauty Spell',price:1500,discountPrice:900,image:'https://images.unsplash.com/photo-1586495777744-4413f21062fa?auto=format&fit=crop&w=900&q=80',description:'Soft, comfortable color with a polished velvet finish.',badge:'40% OFF',rating:4.8,reviews:126,stock:24,featured:true,tags:['lip','tint','makeup']},
-{id:2,name:'Radiance Skin Serum',category:'Skincare',brand:'Glow Lab',price:1850,discountPrice:1390,image:'https://images.unsplash.com/photo-1620916566398-39f1143ab7be?auto=format&fit=crop&w=900&q=80',description:'A lightweight everyday serum for a fresh, luminous look.',badge:'BESTSELLER',rating:4.9,reviews:218,stock:18,featured:true,tags:['serum','glow','skincare']},
-{id:3,name:'Petal Glow Blush',category:'Face',brand:'Beauty Spell',price:1250,discountPrice:990,image:'https://images.unsplash.com/photo-1596462502278-27bfdc403348?auto=format&fit=crop&w=900&q=80',description:'Silky buildable blush designed for a soft petal flush.',rating:4.7,reviews:83,stock:16,tags:['blush','face','makeup']},
-{id:4,name:'Rose Cloud Moisturizer',category:'Skincare',brand:'Dew Theory',price:1600,discountPrice:1190,image:'https://images.unsplash.com/photo-1556228720-195a672e8a03?auto=format&fit=crop&w=900&q=80',description:'Daily moisture with an airy, non-greasy feel.',badge:'NEW',rating:4.8,reviews:97,stock:22,featured:true,tags:['moisturizer','hydration','skincare']},
-{id:5,name:'Soft Focus Setting Powder',category:'Face',brand:'Luma',price:1450,discountPrice:1150,image:'https://images.unsplash.com/photo-1590156206657-fb5f9578f527?auto=format&fit=crop&w=900&q=80',description:'A finely milled powder for a smooth, soft-focus finish.',badge:'21% OFF',rating:4.6,reviews:74,stock:14,tags:['powder','face','makeup']},
-{id:6,name:'Midnight Lash Mascara',category:'Eyes',brand:'Beauty Spell',price:1100,discountPrice:850,image:'https://images.unsplash.com/photo-1631214524020-7e18db9a8f92?auto=format&fit=crop&w=900&q=80',description:'Defines lashes with rich color and lightweight volume.',badge:'HOT',rating:4.7,reviews:132,stock:27,featured:true,tags:['mascara','eyes','makeup']},
-{id:7,name:'Daily Shield Sunscreen SPF50',category:'Skincare',brand:'Sun Muse',price:1350,discountPrice:1090,image:'https://images.unsplash.com/photo-1556229010-6c3f2c9ca5f8?auto=format&fit=crop&w=900&q=80',description:'Comfortable broad-spectrum daily sun protection with a fresh finish.',badge:'POPULAR',rating:4.9,reviews:304,stock:31,featured:true,tags:['sunscreen','spf','skincare']},
-{id:8,name:'Glass Shine Lip Oil',category:'Lips',brand:'Luma',price:950,discountPrice:790,image:'https://images.unsplash.com/photo-1631729371254-42c2892f0e6e?auto=format&fit=crop&w=900&q=80',description:'Nourishing shine with a smooth, cushiony feel.',rating:4.6,reviews:66,stock:20,tags:['lip oil','gloss','lips']},
-{id:9,name:'Calm Clean Gel Cleanser',category:'Skincare',brand:'Dew Theory',price:1200,discountPrice:980,image:'https://images.unsplash.com/photo-1556228578-8c89e6adf883?auto=format&fit=crop&w=900&q=80',description:'A gentle gel cleanser for a clean, comfortable finish.',rating:4.8,reviews:142,stock:19,tags:['cleanser','skincare','daily']},
-{id:10,name:'Satin Finish Foundation',category:'Face',brand:'Luma',price:1950,discountPrice:1490,image:'https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=900&q=80',description:'Medium buildable coverage with a natural satin finish.',badge:'24% OFF',rating:4.7,reviews:111,stock:12,tags:['foundation','face','makeup']},
-{id:11,name:'Brow Sculpt Pencil',category:'Eyes',brand:'Beauty Spell',price:800,discountPrice:650,image:'https://images.unsplash.com/photo-1599733594230-6b823276abcc?auto=format&fit=crop&w=900&q=80',description:'Fine-tip definition for easy, natural-looking brows.',rating:4.5,reviews:51,stock:33,tags:['brow','eyes','pencil']},
-{id:12,name:'Bloom Eau de Parfum',category:'Fragrance',brand:'Maison Bloom',price:2900,discountPrice:2390,image:'https://images.unsplash.com/photo-1541643600914-78b084683601?auto=format&fit=crop&w=900&q=80',description:'A soft floral fragrance with clean musk and warm petals.',badge:'NEW',rating:4.8,reviews:89,stock:10,featured:true,tags:['perfume','fragrance','gift']}];
-export function getProductsFromStorage():Product[]{if(typeof window==='undefined')return starterProducts;try{const raw=localStorage.getItem('beauty-spell-products');if(!raw)return starterProducts;const p=JSON.parse(raw);return Array.isArray(p)?p:starterProducts}catch{return starterProducts}}
-export function getDiscountPercent(p:Product){if(!p.discountPrice||p.discountPrice>=p.price)return 0;return Math.round((1-p.discountPrice/p.price)*100)}
+import { getSupabaseClient } from '@/lib/supabase';
+
+export type Product = {
+  id: number;
+  name: string;
+  category: string;
+  brand?: string;
+  price: number;
+  discountPrice?: number;
+  image: string;
+  description: string;
+  badge?: string;
+  rating?: number;
+  reviews?: number;
+  stock?: number;
+  featured?: boolean;
+  active: boolean;
+  tags?: string[];
+};
+
+export type ProductFields = Omit<Product, 'id'>;
+const LEGACY_PRODUCT_STORAGE_KEY = 'beauty-spell-products';
+
+function toProduct(row: Record<string, unknown>): Product {
+  const id = Number(row.id ?? row.product_id);
+  const price = Number(row.price);
+  const image = row.image_url ?? row.image;
+
+  if (!Number.isSafeInteger(id) || !Number.isFinite(price) ||
+      typeof row.name !== 'string' || typeof row.category !== 'string' ||
+      typeof image !== 'string') {
+    throw new Error('A product row is missing a valid id, name, category, price, or image URL.');
+  }
+
+  const discountPrice = row.discount_price ?? row.discountPrice;
+  const stock = row.stock;
+
+  return {
+    id,
+    name: row.name,
+    category: row.category,
+    brand: typeof row.brand === 'string' ? row.brand : undefined,
+    price,
+    discountPrice: discountPrice == null ? undefined : Number(discountPrice),
+    image,
+    description: typeof row.description === 'string' ? row.description : '',
+    badge: typeof row.badge === 'string' ? row.badge : undefined,
+    rating: Number.isFinite(Number(row.rating)) ? Number(row.rating) : 4.8,
+    reviews: Number.isFinite(Number(row.reviews)) ? Number(row.reviews) : 0,
+    stock: stock == null ? undefined : Number(stock),
+    featured: row.featured === true,
+    active: row.active !== false,
+    tags: Array.isArray(row.tags) ? row.tags.filter((tag): tag is string => typeof tag === 'string') : [],
+  };
+}
+
+function toDatabaseFields(product: ProductFields) {
+  return {
+    name: product.name,
+    brand: product.brand ?? null,
+    category: product.category,
+    price: product.price,
+    discount_price: product.discountPrice ?? null,
+    stock: product.stock ?? 0,
+    image_url: product.image,
+    description: product.description,
+    badge: product.badge ?? null,
+    featured: product.featured ?? false,
+    active: product.active,
+  };
+}
+
+export async function getProducts(includeInactive = false): Promise<Product[]> {
+  const client = getSupabaseClient();
+  if (!client) {
+    throw new Error('Supabase is not configured. Set the public Supabase URL and anon or publishable key.');
+  }
+
+  const { data, error } = await client.from('products').select('*');
+  if (error) throw new Error(`Could not load products: ${error.message}`);
+  if (!data) throw new Error('Supabase returned no product data.');
+
+  const products = data.map((row) => toProduct(row as Record<string, unknown>));
+  return includeInactive ? products : products.filter((product) => product.active);
+}
+
+export async function addProduct(product: ProductFields): Promise<Product> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase is not configured.');
+
+  const { data, error } = await client
+    .from('products')
+    .insert(toDatabaseFields(product))
+    .select('*')
+    .single();
+  if (error) throw new Error(`Could not add product: ${error.message}`);
+  if (!data) throw new Error('Supabase did not return the newly added product.');
+  return toProduct(data as Record<string, unknown>);
+}
+
+export async function updateProduct(id: number, product: ProductFields): Promise<Product> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase is not configured.');
+
+  const { data, error } = await client
+    .from('products')
+    .update(toDatabaseFields(product))
+    .eq('id', id)
+    .select('*')
+    .single();
+  if (error) throw new Error(`Could not update product: ${error.message}`);
+  if (!data) throw new Error('Supabase did not return the updated product.');
+  return toProduct(data as Record<string, unknown>);
+}
+
+export async function setProductActive(id: number, active: boolean): Promise<void> {
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase is not configured.');
+
+  const { data, error } = await client
+    .from('products')
+    .update({ active })
+    .eq('id', id)
+    .select('id')
+    .single();
+  if (error) throw new Error(`Could not ${active ? 'enable' : 'disable'} product: ${error.message}`);
+  if (!data) throw new Error('The product was not found.');
+}
+
+export async function migrateLegacyProducts(): Promise<number> {
+  if (typeof window === 'undefined') throw new Error('Legacy product import is only available in a browser.');
+
+  const raw = window.localStorage.getItem(LEGACY_PRODUCT_STORAGE_KEY);
+  if (!raw) throw new Error('No legacy product catalogue was found in this browser.');
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('The legacy product catalogue is not valid JSON.');
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error('The legacy product catalogue is empty or invalid.');
+  }
+
+  const legacyProducts = parsed.map((item: unknown): Product => {
+    if (!item || typeof item !== 'object') throw new Error('A legacy product record is invalid.');
+    const legacy = item as Partial<Product>;
+    if (!Number.isSafeInteger(legacy.id) || typeof legacy.name !== 'string' ||
+        typeof legacy.category !== 'string' || !Number.isFinite(legacy.price) ||
+        typeof legacy.image !== 'string' || typeof legacy.description !== 'string') {
+      throw new Error('A legacy product is missing a valid id, name, category, price, image, or description.');
+    }
+    return {
+      ...legacy,
+      id: legacy.id as number,
+      name: legacy.name,
+      category: legacy.category,
+      price: legacy.price as number,
+      image: legacy.image,
+      description: legacy.description,
+      active: legacy.active !== false,
+    };
+  });
+
+  const client = getSupabaseClient();
+  if (!client) throw new Error('Supabase is not configured.');
+  const { data: existing, error: lookupError } = await client
+    .from('products')
+    .select('id')
+    .limit(1);
+  if (lookupError) throw new Error(`Could not check the Supabase catalogue: ${lookupError.message}`);
+  if (existing?.length) {
+    throw new Error('Supabase already has products. Legacy import is only allowed into an empty catalogue.');
+  }
+
+  for (const product of legacyProducts) {
+    if (!product.image.startsWith('data:image/')) continue;
+    const response = await fetch(product.image);
+    if (!response.ok) throw new Error(`Could not read the saved image for "${product.name}".`);
+    const blob = await response.blob();
+    if (!blob.type.startsWith('image/')) {
+      throw new Error(`The saved image for "${product.name}" has an invalid image format.`);
+    }
+    const extension = blob.type.split('/')[1]?.replace(/[^a-zA-Z0-9]/g, '') || 'img';
+    const path = `products/${product.id}-${crypto.randomUUID()}.${extension}`;
+    const { data: uploaded, error: uploadError } = await client.storage
+      .from('product-images')
+      .upload(path, blob, { contentType: blob.type, upsert: false });
+    if (uploadError) {
+      throw new Error(`Could not migrate the saved image for "${product.name}": ${uploadError.message}`);
+    }
+    product.image = client.storage.from('product-images').getPublicUrl(uploaded.path).data.publicUrl;
+  }
+
+  const { data, error } = await client
+    .from('products')
+    .insert(legacyProducts.map((product) => ({
+      id: product.id,
+      ...toDatabaseFields(product),
+    })))
+    .select('id');
+  if (error) throw new Error(`Could not import legacy products: ${error.message}`);
+  if (!data || data.length !== legacyProducts.length) {
+    throw new Error('Supabase did not confirm that every legacy product was imported.');
+  }
+
+  const { error: sequenceError } = await client.rpc('sync_products_id_sequence');
+  if (sequenceError) {
+    throw new Error(`Products were imported, but the ID sequence could not be synchronized: ${sequenceError.message}`);
+  }
+
+  try {
+    window.localStorage.removeItem(LEGACY_PRODUCT_STORAGE_KEY);
+  } catch (error) {
+    throw new Error(
+      `Products were imported, but the old browser copy could not be removed: ${
+        error instanceof Error ? error.message : 'browser storage is unavailable'
+      }`,
+    );
+  }
+  return data.length;
+}
+
+export function getDiscountPercent(product: Product) {
+  if (!product.discountPrice || product.discountPrice >= product.price) return 0;
+  return Math.round((1 - product.discountPrice / product.price) * 100);
+}
